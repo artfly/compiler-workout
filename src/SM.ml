@@ -23,7 +23,25 @@ type config = int list * Syntax.Stmt.config
 
    Takes a configuration and a program, and returns a configuration as a result
  *)                         
-let eval _ = failwith "Not yet implemented"
+
+let eval_insn (stack, (state, is, os)) insn = match insn with
+  | CONST(x) -> (x::stack, (state, is, os))
+  | BINOP(op) -> (match stack with
+    | x::y::tl -> (((Syntax.Expr.eval_op op) x y)::tl, (state, is, os))
+    | _ -> failwith(Printf.sprintf "Stack doesn't contain enough values"))
+  | READ -> (match is with 
+    | hd::tl -> (hd::stack, (state, tl, os))
+    | _ -> failwith(Printf.sprintf "Input is empty"))
+  | WRITE -> (match stack with
+    | hd::tl -> (tl, (state, is, hd::os))
+    | _ -> failwith(Printf.sprintf "Stack is empty"))
+  | LD(x) -> ((state x)::stack, (state, is, os))
+  | ST(x) -> (match stack with
+    | hd::tl -> (tl, ((Syntax.Expr.update x hd state), is, os))
+    | _ -> failwith(Printf.sprintf "Stack is empty"))
+
+let eval config prg = (List.fold_left eval_insn config) prg
+
 
 (* Top-level evaluation
 
@@ -41,4 +59,13 @@ let run i p = let (_, (_, _, o)) = eval ([], (Syntax.Expr.empty, i, [])) p in o
    stack machine
  *)
 
-let compile _ = failwith "Not yet implemented"
+let rec compile_expr e = match e with
+  | Syntax.Expr.Const(c) -> [CONST(c)]
+  | Syntax.Expr.Var(x) -> [LD(x)]
+  | Syntax.Expr.Binop(op, e1, e2) -> (compile_expr e2) @ (compile_expr e1) @ [BINOP(op)]
+
+let rec compile s = match s with
+  | Syntax.Stmt.Read(x) -> [READ; ST(x)]
+  | Syntax.Stmt.Write(e) -> (compile_expr e) @ [WRITE]
+  | Syntax.Stmt.Assign(x, e) -> (compile_expr e) @ [ST(x)]
+  | Syntax.Stmt.Seq(s1, s2) -> compile s1 @compile s2

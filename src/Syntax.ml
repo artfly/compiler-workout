@@ -41,8 +41,31 @@ module Expr =
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
     *)
-    let eval _ = failwith "Not implemented yet"
+    let to_int x = if x then 1 else 0
+    let cast_int_op op = fun x y -> to_int (op x y)
+    let to_bool i = if i == 0 then false else true
+    let cast_bool_op op = fun x y -> to_int (op (to_bool x) (to_bool y))
 
+    let eval_op op = match op with
+      | "-" -> ( - )
+      | "+" -> ( + )
+      | "/" -> ( / )
+      | "*" -> ( * )
+      | "%" -> ( mod ) 
+      | "==" -> cast_int_op ( == )
+      | "!=" -> cast_int_op ( != )
+      | "<=" -> cast_int_op ( <= )
+      | "<" -> cast_int_op ( < )
+      | ">=" -> cast_int_op ( >= )
+      | ">" -> cast_int_op ( > )
+      | "&&" -> cast_bool_op ( && ) 
+      | "!!" -> cast_bool_op ( || )
+      | _ -> failwith(Printf.sprintf "Undefined operator for binary expression")
+
+    let rec eval s e = match e with
+      | Const (c) -> c
+      | Var (x) -> s x
+      | Binop (op, x, y) -> eval_op op (eval s x) (eval s y)
   end
                     
 (* Simple statements: syntax and sematics *)
@@ -65,7 +88,14 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let eval _ = failwith "Not implemented yet"
+
+    let rec eval ((state, is, os): config) (s:t) : config = match s with
+      | Read(x) -> (match is with
+        | [] -> failwith(Printf.sprintf "No more input")
+        | hd::tl -> (Expr.update x hd state, tl, os))
+      | Write(e) -> (state, is, (Expr.eval state e)::os)
+      | Assign(x, e) -> ((Expr.update x (Expr.eval state e) state), is, os)
+      | Seq(s1, s2) -> (eval (eval (state, is, os) s1) s2)
                                                          
   end
 
