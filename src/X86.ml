@@ -80,7 +80,51 @@ open SM
    Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
    of x86 instructions
 *)
-let compile _ _ = failwith "Not yet implemented"
+let set_flag suf = [Binop("^", eax, eax); Set (suf, "%al");]
+
+let cmp op inverted suf res = 
+  let inversion = if inverted then [Binop("^", L 1, eax)] else [] in
+    [Binop("^", eax, eax)] @ op @ [Set (suf, "%al")] @ inversion @ [Mov(eax, res)]
+
+let rec compile env = function
+| [] -> env, []
+| instr :: code' ->
+  let env, asm = match instr with
+    | CONST n -> 
+      let s, env = env#allocate in
+      env, [Mov (L n, s)]
+    | WRITE ->
+      let s, env = env#pop in
+        env, [Push s; Call "Lwrite"]
+    | READ ->
+      let s, env = env#allocate in
+        env, [Call "Lread"; Mov (eax, s)]
+    | LD x ->   
+      let s, env = (env#global x)#allocate in
+        env, [Mov (M env#loc x, s)]
+    | ST x -> 
+      let s, env = (env#global x)#pop in
+        env, [Mov (s, M env#loc x)]
+    | BINOP op -> 
+      let op2, op1, env = env#pop2 in
+      let res, env = env#allocate in
+        env,
+        match op with
+          | "-" | "*" | "+" -> [Binop (op, op2, op1)]
+          | "&&" | "!!" -> [Binop (op, op1, op2)]
+          | "/" -> [Mov (op1, eax); Cltd; IDiv op2; Mov (eax, res)]
+          | "%" -> [Mov (op1, eax); Cltd; IDiv op2; Mov (edx, res)]
+          | "==" -> cmp [Binop("cmp", op2, op1)] false "z" res
+          | "!=" -> cmp [Binop("cmp", op2, op1)] true "z" res
+          | "<" ->  cmp [Binop("-", op2, op1)] false "s" res
+          | ">=" ->  cmp [Binop("-", op2, op1)] true "s" res
+          | ">" ->  cmp [Binop("-", op1, op2)] false "s" res
+          | "<=" ->  cmp [Binop("-", op1, op2)] true "s" res
+  in 
+  let env, asm' = compile env code' in
+  env, asm @ asm'
+
+
 
 (* A set of strings *)           
 module S = Set.Make (String)

@@ -24,7 +24,23 @@ type config = int list * Stmt.config
 
    Takes a configuration and a program, and returns a configuration as a result
 *)                         
-let rec eval conf prog = failwith "Not yet implemented"
+let eval_insn (stack, (state, is, os)) insn = match insn with
+  | CONST(x) -> (x::stack, (state, is, os))
+  | BINOP(op) -> (match stack with
+    | x::y::tl -> (((Language.Expr.eval_op op) y x)::tl, (state, is, os))
+    | _ -> failwith(Printf.sprintf "Stack doesn't contain enough values"))
+  | READ -> (match is with 
+    | hd::tl -> (hd::stack, (state, tl, os))
+    | _ -> failwith(Printf.sprintf "Input is empty"))
+  | WRITE -> (match stack with
+    | hd::tl -> (tl, (state, is, os @ [hd]))
+    | _ -> failwith(Printf.sprintf "Stack is empty"))
+  | LD(x) -> ((state x)::stack, (state, is, os))
+  | ST(x) -> (match stack with
+    | hd::tl -> (tl, ((Language.Expr.update x hd state), is, os))
+    | _ -> failwith(Printf.sprintf "Stack is empty"))
+
+let eval config prg = (List.fold_left eval_insn config) prg
 
 (* Top-level evaluation
 
