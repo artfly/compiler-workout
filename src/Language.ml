@@ -150,11 +150,51 @@ module Stmt =
 
        which returns a list of formal parameters and a body for given definition
     *)
-    let rec eval _ = failwith "Not Implemented Yet"
+    let enter params values locals st = 
+      let rec bind xs vs st = 
+        match (xs, vs) with
+          | ([], _) -> st, vs
+          | (x::xs', v::vs') -> let st' = State.update x v st in bind xs' vs' st'
+      in
+        let st' = State.push_scope st (params @ locals) in bind params values st'
+
+    let rec eval env ((st, i, o) as conf) stmt = match stmt with
+      | Read(x)       -> (match i with v::i' -> (State.update x v st), i', o)
+      | Write(e)      -> let v = Expr.eval st e in st, i, o @ [v]
+      | Assign(x, e)  -> let v = Expr.eval st e in (State.update x v st), i, o
+      | Seq(s1, s2)   -> let conf' = eval env conf s1 in eval env conf' s2
+      | If(c, s1, s2) -> let v = Expr.eval st c in eval env conf (if v <> 0 then s1 else s2)
+      | While(c, s)   -> let v = Expr.eval st c in if v <> 0 then let conf' = eval env conf s in eval env conf' stmt else conf
+      | Repeat(s, c)  -> let (st', _, _) as conf' = eval env conf s in let v = Expr.eval st' c in
+                         if v = 0
+                         then eval env conf' stmt
+                         else conf'
+      | Skip ->          conf
+      | Call(f, args) -> let params, locals, s = env#definition f in 
+                         let values = List.map (Expr.eval st) args in
+                         let (st', _) = enter params values locals st in
+                         let (st'', i', o') = eval env (st', i, o) s in
+                         (State.drop_scope st'' st), i', o'
                                 
     (* Statement parser *)
-    ostap (                                      
-      parse: empty {failwith "Not yet implemented"}
+    ostap (
+      simple_stmt:
+        x:IDENT ":=" e:!(Expr.parse) {Assign(x, e)}
+      | "read" "(" x:IDENT ")" {Read x}
+      | "write" "(" e:!(Expr.parse) ")" {Write e}
+      | "skip" {Skip}
+      | "if" c:!(Expr.parse) "then" s1:parse s2:else_branch {If(c, s1, s2)}
+      | "while" c:!(Expr.parse) "do" s:parse "od" {While(c, s)}
+      | "repeat" s:parse "until" c:!(Expr.parse) {Repeat(s, c)}
+      | "for" init:simple_stmt "," c:!(Expr.parse) "," update:simple_stmt "do" s:parse "od" {Seq(init, While(c, Seq(s, update)))}
+      | f:IDENT "("args:arguments ")" {Call(f, args)}
+      ;
+      
+      arguments: e:!(Expr.parse) "," rest:arguments { e::rest} | e:!(Expr.parse) {[e]} | "" {[]};
+
+      else_branch: "elif" cond:!(Expr.parse) "then" ss:simple_stmt rest:else_branch {If(cond, ss, rest)} | "else" s:parse "fi" {s} | "fi" {Skip};
+
+      parse: ss:simple_stmt ";" rest:parse {Seq(ss, rest)} | simple_stmt
     )
       
   end
@@ -166,8 +206,14 @@ module Definition =
     (* The type for a definition: name, argument list, local variables, body *)
     type t = string * (string list * string list * Stmt.t)
 
-    ostap (                                      
-      parse: empty {failwith "Not yet implemented"}
+    ostap (
+      identifiers: id:IDENT "," rest:identifiers {id::rest} | id:IDENT {[id]};
+
+      parameters: params: identifiers {params} | "" {[]};
+
+      local_vars: "local" locals:identifiers {locals} | "" {[]};
+
+      parse: "fun" name:IDENT "(" params:parameters ")" locals:local_vars "{" s:!(Stmt.parse) "}" {(name, (params, locals, s))}
     )
 
   end
