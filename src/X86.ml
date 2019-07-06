@@ -90,7 +90,75 @@ open SM
    Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
    of x86 instructions
 *)
-let compile env code = failwith "Not implemented"
+let set_flag suf = [Binop("^", eax, eax); Set (suf, "%al");]
+
+let cmp op inverted suf res = 
+  let inversion = if inverted then [Binop("^", L 1, eax)] else [] in
+    [Binop("^", eax, eax)] @ op @ [Set (suf, "%al")] @ inversion @ [Mov(eax, res)]
+
+let rec compile env = function
+| [] -> env, []
+| instr :: code' ->
+  let env, asm = match instr with
+    | CONST n -> 
+      let s, env = env#allocate in
+      env, [Mov (L n, s)]
+    | WRITE ->
+      let s, env = env#pop in
+        env, [Push s; Call "Lwrite"]
+    | READ ->
+      let s, env = env#allocate in
+        env, [Call "Lread"; Mov (eax, s)]
+    | LD x ->   
+      let s, env = (env#global x)#allocate in
+        env, [Mov (env#loc x, eax); Mov (eax, s)]
+    | ST x -> 
+      let s, env = (env#global x)#pop in
+        env, [Mov (s, eax); Mov (eax,env#loc x)]
+    | BINOP op -> 
+      let op2, op1, env = env#pop2 in
+      let res, env = env#allocate in
+        (env,
+        [Mov (op1, edx)] @
+        match op with
+          | "-" | "*" | "+" -> [Binop (op, op2, edx); Mov(edx, res)]
+          | "&&" | "!!" -> (cmp [Binop("cmp", L 0, edx)] true "z" edx) @ (cmp [Binop("cmp", L 0, op2)] true "z" op2) @ [Binop(op, op2, edx)] @ [Mov(edx, res)]
+          | "/" -> [Mov (edx, eax); Cltd; IDiv op2; Mov (eax, res)]
+          | "%" -> [Mov (edx, eax); Cltd; IDiv op2; Mov (edx, res)]
+          | "==" -> cmp [Binop("cmp", op2, edx)] false "z" res
+          | "!=" -> cmp [Binop("cmp", op2, edx)] true "z" res
+          | "<" ->  cmp [Binop("-", op2, edx)] false "s" res
+          | ">=" ->  cmp [Binop("-", op2, edx)] true "s" res
+          | ">" ->  cmp [Binop("-", edx, op2)] false "s" res
+          | "<=" ->  cmp [Binop("-", edx, op2)] true "s" res)
+    | LABEL(l) -> env, [Label(l)] 
+    | JMP(l) -> env, [Jmp(l)]
+    | CJMP(cond, l) -> let loc, env = env#pop in env, [Binop ("cmp", L 0, loc); CJmp (cond, l)]
+    | BEGIN(f, a, l) -> let env = env#enter f a l in env, [Push ebp; Mov(esp, ebp); Binop("-", M ("$" ^ env#lsize), esp)]
+    | END -> env, [Label env#epilogue; 
+                   Mov(ebp, esp);
+                   Pop ebp;
+                   Ret;
+                   Meta (Printf.sprintf "\t.set\t%s,\t%d" env#lsize (env#allocated * word_size))
+                  ]
+    | RET(res) -> if (res) then let x, env = env#pop in env, [Mov(x, eax); Jmp env#epilogue] else env, [Jmp env#epilogue]
+    | CALL(f, n, res) -> let rec to_stack n code env = match n with 
+                       | 0 -> code, env
+                       | _ -> let a, env = env#pop in
+                              let n = n - 1 in 
+                              let code = [Push a] @ code in
+                              to_stack n code env
+                       in
+                       let code, env = to_stack n [] env in
+                       let regs = env#live_registers in
+                       let code = (List.fold_left (fun acc r -> [Push r] @ acc) code regs) in
+                       let code = code @ [Call f; Binop("+", L(n * word_size), esp)] in
+                       let code = List.fold_left (fun acc r -> acc @ [Pop r]) code regs in
+                       if (res) then let s, env = env#allocate in env, code @ [Mov(eax, s)] else env, code
+    
+  in 
+  let env, asm' = compile env code' in
+  env, asm @ asm'
                                 
 (* A set of strings *)           
 module S = Set.Make (String)
